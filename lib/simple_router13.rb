@@ -41,7 +41,11 @@ class SimpleRouter < Trema::Controller
       @interfaces.find_by(port_number: in_port,
                           ip_address: arp_request.target_protocol_address)
     return unless interface
-    send_packet_out(
+
+
+#This will be replaced by send_flow_mod_add.
+=begin
+   send_packet_out(
       dpid,
       raw_data: Arp::Reply.new(
         destination_mac: arp_request.source_mac,
@@ -50,9 +54,31 @@ class SimpleRouter < Trema::Controller
         target_protocol_address: arp_request.sender_protocol_address
       ).to_binary,
       instructions: Apply.new(SendOutPort.new(in_port)))
-  end
-  # rubocop:enable MethodLength
 
+  end
+=end
+
+   send_flow_mod_add(
+        datapath_id,
+        table_id:    ,#TODO
+        idle_timeout:,#TODO
+        priority:    ,#TODO
+        match:        Match.new(dl_type: 0x0806),#ARP Ethernet type
+	instructions: Apply.new([
+                                #rewrite arp_request to arp_reply
+                                SetArpOperation.new(Arp::Reply::OPERATION),
+                                SetArpSenderHardwareAddress.new(interface.mac_address),
+                                SetArpSenderProtocolAddress.new(interface.ip_address),
+                                NiciraRegMove.new(from: :source_mac_address, to: :destination_mac_address),
+                                SetSourceMacAddress.new(interface.mac_address),
+                                
+                                #send out arp_reply
+                                SendOutPort.new(message.in_port)
+                                ]) 
+   )
+
+
+  # rubocop:enable MethodLength
   def packet_in_arp_reply(dpid, message)
     @arp_table.update(message.in_port,
                       message.sender_protocol_address,
@@ -111,9 +137,10 @@ class SimpleRouter < Trema::Controller
 
     arp_entry = @arp_table.lookup(next_hop)
     if arp_entry
-      actions = [SetSourceMacAddress.new(interface.mac_address),
-                 SetDestinationMacAddress.new(arp_entry.mac_address),
-                 SendOutPort.new(interface.port_number)]
+       actions = [SetSourceMacAddress.new(interface.mac_address),
+                  SetDestinationMacAddress.new(arp_entry.mac_address),
+                  SendOutPort.new(interface.port_number)]
+      
       send_flow_mod_add(dpid, match: ExactMatch.new(message), instructions: Apply.new(actions))
       send_packet_out(dpid, raw_data: message.raw_data, instructions: Apply.new(actions))
     else
