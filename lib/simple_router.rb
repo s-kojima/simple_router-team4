@@ -49,7 +49,7 @@ class SimpleRouter < Trema::Controller
         sender_protocol_address: arp_request.target_protocol_address,
         target_protocol_address: arp_request.sender_protocol_address
       ).to_binary,
-      instructions: Apply.new(SendOutPort.new(in_port)))
+      actions: SendOutPort.new(in_port))
   end
   # rubocop:enable MethodLength
 
@@ -79,7 +79,7 @@ class SimpleRouter < Trema::Controller
     if @arp_table.lookup(message.source_ip_address)
       send_packet_out(dpid,
                       raw_data: create_icmp_reply(icmp_request).to_binary,
-                      instructions: Apply.new(SendOutPort.new(message.in_port)))
+                      actions: SendOutPort.new(message.in_port))
     else
       send_later(dpid,
                  interface: @interfaces.find_by(port_number: message.in_port),
@@ -114,8 +114,8 @@ class SimpleRouter < Trema::Controller
       actions = [SetSourceMacAddress.new(interface.mac_address),
                  SetDestinationMacAddress.new(arp_entry.mac_address),
                  SendOutPort.new(interface.port_number)]
-      send_flow_mod_add(dpid, match: ExactMatch.new(message), instructions: Apply.new(actions))
-      send_packet_out(dpid, raw_data: message.raw_data, instructions: Apply.new(actions))
+      send_flow_mod_add(dpid, match: ExactMatch.new(message), actions: actions)
+      send_packet_out(dpid, raw_data: message.raw_data, actions: actions)
     else
       send_later(dpid,
                  interface: interface,
@@ -158,7 +158,7 @@ class SimpleRouter < Trema::Controller
         [SetDestinationMacAddress.new(arp_reply.sender_hardware_address),
          SetSourceMacAddress.new(interface.mac_address),
          SendOutPort.new(interface.port_number)]
-      send_packet_out(dpid, raw_data: each.to_binary_s, instructions: Apply.new(rewrite_mac))
+      send_packet_out(dpid, raw_data: each.to_binary_s, actions: rewrite_mac)
     end
     @unresolved_packet_queue[destination_ip] = []
   end
@@ -170,7 +170,7 @@ class SimpleRouter < Trema::Controller
                        target_protocol_address: destination_ip)
     send_packet_out(dpid,
                     raw_data: arp_request.to_binary,
-                    instructions: Apply.new(SendOutPort.new(interface.port_number)))
+                    actions: SendOutPort.new(interface.port_number))
   end
 end
 # rubocop:enable ClassLength
