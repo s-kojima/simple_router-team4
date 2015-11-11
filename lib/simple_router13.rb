@@ -8,6 +8,7 @@ class SimpleRouter < Trema::Controller
 
   CLASSIFIER_TABLE_ID = 0
   ARP_RESPONDER_TABLE_ID = 1
+  FORWARDING_TABLE_ID = 2
 
   def start(_args)
     load File.join(__dir__, '..', 'simple_router.conf')
@@ -47,6 +48,22 @@ class SimpleRouter < Trema::Controller
       @interfaces.find_by(port_number: in_port,
                           ip_address: arp_request.target_protocol_address)
     return unless interface
+
+   ####
+      actions = [
+                 SetArpOperation.new(Arp::Reply::OPERATION),
+                 NiciraRegMove.new(from: :source_mac_address,to: :destination_mac_address)
+                 NiciraRegMove.new(from: :arp_sender_protocol_address,to: :arp_target_protocol_address)
+                 NiciraRegMove.new(from: :arp_sender_hardware_address,to: :arp_target_hardware_address),
+                 SetSourceMacAddress.new(interface.mac_address),
+                 SetArpSenderHardwareAddress.new(interface.mac_address),
+                 SetArpSenderProtocolAddress.new(interface.ip_address),
+                 SendOutPort.new(in_port)
+               ]
+      send_flow_mod_add(dpid, table_id: ARP_RESPONDER_TABLE_ID, idle_timeout: 0,
+      priority: 2, match: Match.new(dl_type: 0x0806, Ipv4DestinationAddress: arp_request.target_protocol_address, ArpOp: Arp::Request::OPERATION), instructions: Apply.new(actions))
+     #####
+
     send_packet_out(
       dpid,
       raw_data: Arp::Reply.new(
@@ -56,6 +73,10 @@ class SimpleRouter < Trema::Controller
         target_protocol_address: arp_request.sender_protocol_address
       ).to_binary,
       actions: SendOutPort.new(in_port))
+
+
+
+
   end
   # rubocop:enable MethodLength
 
@@ -120,7 +141,7 @@ class SimpleRouter < Trema::Controller
       actions = [SetSourceMacAddress.new(interface.mac_address),
                  SetDestinationMacAddress.new(arp_entry.mac_address),
                  SendOutPort.new(interface.port_number)]
-      send_flow_mod_add(dpid, table_id: ARP_RESPONDER_TABLE_ID, match: ExactMatch.new(message), instructions: Apply.new(actions))
+      send_flow_mod_add(dpid, table_id: FORWARDING_TABLE_ID, match: ExactMatch.new(message), instructions: Apply.new(actions))
       send_packet_out(dpid, raw_data: message.raw_data, actions: actions)
     else
       send_later(dpid,
@@ -185,7 +206,7 @@ class SimpleRouter < Trema::Controller
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
       priority: 2,
-      match: Match.new(ArpOp: Arp::Request||Arp::Reply),
+      match: Match.new(ArpOp: Arp::Request::OPERATION||Arp::Reply::OPERATION),
       instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
     )
   end
