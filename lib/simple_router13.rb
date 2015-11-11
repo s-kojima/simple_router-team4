@@ -49,6 +49,7 @@ class SimpleRouter < Trema::Controller
                           ip_address: arp_request.target_protocol_address)
     return unless interface
 
+<<<<<<< HEAD
    ####
       actions = [
                  SetArpOperation.new(Arp::Reply::OPERATION),
@@ -62,9 +63,28 @@ class SimpleRouter < Trema::Controller
                ]
       send_flow_mod_add(dpid, table_id: ARP_RESPONDER_TABLE_ID, idle_timeout: 0,
       priority: 2, match: Match.new(dl_type: 0x0806, Ipv4DestinationAddress: arp_request.target_protocol_address, ArpOp: Arp::Request::OPERATION), instructions: Apply.new(actions))
+
      #####
 
-    send_packet_out(
+   send_flow_mod_add(
+        datapath_id,
+        table_id:    ,#TODO
+        idle_timeout:,#TODO
+        priority:    ,#TODO
+        match:        Match.new(dl_type: 0x0806),#ARP Ethernet type
+	instructions: Apply.new([
+                                #rewrite arp_request to arp_reply
+                                SetArpOperation.new(Arp::Reply::OPERATION),
+                                SetArpSenderHardwareAddress.new(interface.mac_address),
+                                SetArpSenderProtocolAddress.new(interface.ip_address),
+                                NiciraRegMove.new(from: :source_mac_address, to: :destination_mac_address),
+                                SetSourceMacAddress.new(interface.mac_address),
+                                
+                                #send out arp_reply
+                                SendOutPort.new(message.in_port)
+                                ]) 
+#####
+   send_packet_out(
       dpid,
       raw_data: Arp::Reply.new(
         destination_mac: arp_request.source_mac,
@@ -72,14 +92,13 @@ class SimpleRouter < Trema::Controller
         sender_protocol_address: arp_request.target_protocol_address,
         target_protocol_address: arp_request.sender_protocol_address
       ).to_binary,
+      instructions: Apply.new(SendOutPort.new(in_port)))
       actions: SendOutPort.new(in_port))
 
+   )
 
 
-
-  end
   # rubocop:enable MethodLength
-
   def packet_in_arp_reply(dpid, message)
     @arp_table.update(message.in_port,
                       message.sender_protocol_address,
@@ -138,11 +157,20 @@ class SimpleRouter < Trema::Controller
 
     arp_entry = @arp_table.lookup(next_hop)
     if arp_entry
+<<<<<<< HEAD
+       actions = [SetSourceMacAddress.new(interface.mac_address),
+                  SetDestinationMacAddress.new(arp_entry.mac_address),
+                  SendOutPort.new(interface.port_number)]
+      
+      send_flow_mod_add(dpid, match: ExactMatch.new(message), instructions: Apply.new(actions))
+      send_packet_out(dpid, raw_data: message.raw_data, instructions: Apply.new(actions))
+=======
       actions = [SetSourceMacAddress.new(interface.mac_address),
                  SetDestinationMacAddress.new(arp_entry.mac_address),
                  SendOutPort.new(interface.port_number)]
       send_flow_mod_add(dpid, table_id: FORWARDING_TABLE_ID, match: ExactMatch.new(message), instructions: Apply.new(actions))
       send_packet_out(dpid, raw_data: message.raw_data, actions: actions)
+>>>>>>> bdc81ee84a760bc4fbe87594d6ba037eaaccfe7d
     else
       send_later(dpid,
                  interface: interface,
