@@ -1,6 +1,36 @@
-Result:
-
+Program Logger Results (for referencing operation flow):
 ```
+SimpleRouter started.
+packet_in_arp_request 192.168.1.1
+packet_in_ipv4
+forwarding
+send later
+send request
+packet_in_arp_reply 
+unresolved packet exist
+add arp_reply flow 7a:29:ad:32:e0:11,192.168.2.2
+packet_in_ipv4
+forwarding
+send later
+send request
+packet_in_arp_reply 
+unresolved packet exist
+add arp_reply flow 66:7e:87:57:5f:8f,192.168.1.2
+```
+
+Arp results:
+```
+netns host1
+arp -a
+? (192.168.1.1) at 00:00:00:01:00:01 [ether] on host1
+netns host2
+arp -a
+? (192.168.2.1) at 00:00:00:01:00:02 [ether] on host2
+```
+Dump_flow Result:
+```
+sudo ovs-ofctl dump-flows br0x1 --protocol=OpenFlow13
+
 OFPST_FLOW reply (OF1.3) (xid=0x2):
  cookie=0x0, duration=32.419s, table=0, n_packets=29, n_bytes=2418, priority=0 actions=goto_table:1
  cookie=0x0, duration=32.401s, table=1, n_packets=4, n_bytes=168, priority=0,arp actions=goto_table:2
