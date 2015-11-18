@@ -13,8 +13,10 @@ table=2, n_packets=0, n_bytes=0, priority=0,arp,in_port=2,arp_tpa=192.168.2.1,ar
 table=2, n_packets=0, n_bytes=0, priority=0,arp,reg1=0x1 actions=set_field:01:01:01:01:01:01->eth_src,set_field:01:01:01:01:01:01->arp_sha,set_field:192.168.1.1->arp_spa,goto_table:6
 table=2, n_packets=0, n_bytes=0, priority=0,arp,reg1=0x2 actions=set_field:02:02:02:02:02:02->eth_src,set_field:02:02:02:02:02:02->arp_sha,set_field:192.168.2.1->arp_spa,goto_table:6
 ## table3
+### change the dest. IP address to register 0
 table=3, n_packets=0, n_bytes=0, priority=40024,ip,nw_dst=192.168.1.0/24 actions=move:NXM_OF_IP_DST[]->NXM_NX_REG0[],goto_table:4
 table=3, n_packets=0, n_bytes=0, priority=40024,ip,nw_dst=192.168.2.0/24 actions=move:NXM_OF_IP_DST[]->NXM_NX_REG0[],goto_table:4
+### goto table
 table=3, n_packets=0, n_bytes=0, priority=0,ip actions=load:0xc0a80102->NXM_NX_REG0[],goto_table:4
 ## table4
 table=4, n_packets=0, n_bytes=0, priority=0,reg0=0xc0a80100/0xffffff00 actions=load:0x1->NXM_NX_REG1[],set_field:01:01:01:01:01:01->eth_src,goto_table:5
