@@ -253,7 +253,7 @@ logger.info "send request"
       dpid,
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
-      match: Match.new,#to_do
+      match: Match.new(ether_type: 0x0800),
       instructions: GotoTable.new(ROUTING_TABLE_ID)
     )
   end
@@ -283,7 +283,8 @@ def add_default_arp_forwarding_flow_entry(dpid, interfaces)
        table_id: ARP_RESPONDER_TABLE_ID, 
        match: Match.new(ether_type: 0x0806, 
                         arp_operation: Arp::Request::OPERATION, 
-                        arp_target_protocol_address: each.fetch(:ip_address)), 
+                        arp_target_protocol_address: each.fetch(:ip_address),
+                        in_port: each.fetch(:port)), 
        instructions: [Apply.new(arp_reply_actions), GotoTable.new(EGRESS_TABLE_ID)])
 
  #send flow mod for arp reply
