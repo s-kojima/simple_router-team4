@@ -13,6 +13,11 @@ class SimpleRouter < Trema::Controller
   ARP_LOOKUP_TABLE_ID = 5
   EGRESS_TABLE_ID = 6
 
+  AGING_TIME = 180
+
+  DL_TYPE_IP = 0x0800
+  DL_TYPE_ARP = 0x0806
+
   def start(_args)
     load File.join(__dir__, '..', 'simple_router.conf')
     @interfaces = Interfaces.new(Configuration::INTERFACES)
@@ -40,7 +45,8 @@ class SimpleRouter < Trema::Controller
     when Arp::Reply
       packet_in_arp_reply dpid, message
     when Parser::IPv4Packet
-      packet_in_ipv4 dpid, message
+      #packet_in_ipv4 dpid, message
+      add_routing_table_entry(dpid, message)
     else
       logger.debug "Dropping unsupported packet type: #{message.data.inspect}"
     end
@@ -188,6 +194,39 @@ logger.info "send request"
                     actions: SendOutPort.new(interface.port_number))
   end
 
+  def add_routing_table_entry(dpid, message)
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      idle_timeout: AGING_TIME,
+      priority: 10,
+      match: Match.new(dl_type: 0x0800,
+                       nw_dst: "192.168.1.0/255.255.255.0"),
+      instructions: [Apply.new(NiciraRegMove.new(from: message.nw_dst,
+						 to: :reg0)),
+                    GotoTable.new(LOAD_ARP_TABLE_ID)]
+    )
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      idle_timeout: AGING_TIME,
+      priority: 10,
+      match: Match.new(dl_type: 0x0800,
+                       nw_dst: "192.168.2.0/255.255.255.0"),
+      instructions: [Apply.new(NiciraRegMove.new(from: message.nw_dst,
+						 to: :reg0)),
+                    GotoTable.new(LOAD_ARP_TABLE_ID)]
+    )
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      idle_timeout: 0,
+      priority: 0,
+      match: Match.new,
+      instructions: [Apply.new(NiciraRegLoad.new("0xc0a80102", :reg0)),
+                     GotoTable.new(LOAD_ARP_TABLE_ID)]
+    )
+  end
 
   def add_default_ingress_forwarding_flow_entry(dpid)
     send_flow_mod_add(
