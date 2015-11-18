@@ -33,7 +33,7 @@ class SimpleRouter < Trema::Controller
     add_default_classifier_forwarding_flow_entry(dpid)
     add_default_arp_forwarding_flow_entry(dpid, Configuration::INTERFACES)
     add_default_routing_forwarding_flow_entry(dpid, Configuration::INTERFACES)
-
+    add_default_interface_lookup_forwarding_flow_entry(dpid,Configuration::INTERFACES)
     add_default_arp_lookup_flooding_flow_entry(dpid)
     add_default_egress_forwarding_flow_entry(dpid)
   end
@@ -43,39 +43,37 @@ class SimpleRouter < Trema::Controller
     case message.data
     when Arp::Request
       packet_in_arp_request dpid, message.in_port, message.data
-      add_arp_reply_flow_entry dpid, message.in_port, message.data
     when Arp::Reply
       packet_in_arp_reply dpid, message
+      add_arp_reply_flow_entry dpid, message
     when Parser::IPv4Packet
-      #packet_in_ipv4 dpid, message
-      add_routing_table_entry(dpid, message)
+      packet_in_ipv4 dpid, message
     else
       logger.debug "Dropping unsupported packet type: #{message.data.inspect}"
     end
   end
 
   def packet_in_arp_request(dpid, in_port, arp_request)
-logger.info "packet_in_arp_request"
+logger.info "packet_in_arp_request #{arp_request.target_protocol_address}"
     interface =
       @interfaces.find_by(port_number: in_port,
                           ip_address: arp_request.target_protocol_address)
     return unless interface
 
-   send_packet_out(
-      dpid,
-      raw_data: Arp::Reply.new(
-        destination_mac: arp_request.source_mac,
-        source_mac: interface.mac_address,
-        sender_protocol_address: arp_request.target_protocol_address,
-        target_protocol_address: arp_request.sender_protocol_address
-     ).to_binary,
-     actions: SendOutPort.new(in_port))
+ #  send_packet_out(
+ #     dpid,
+ #     raw_data: Arp::Reply.new(
+ #       destination_mac: arp_request.source_mac,
+ #       source_mac: interface.mac_address,
+ #       sender_protocol_address: arp_request.target_protocol_address,
+ #       target_protocol_address: arp_request.sender_protocol_address
+ #    ).to_binary,
+ #    actions: SendOutPort.new(in_port))
 
-   
    end
 
   def packet_in_arp_reply(dpid, message)
-logger.info "packet_in_arp_reply"
+logger.info "packet_in_arp_reply "
     @arp_table.update(message.in_port,
                       message.sender_protocol_address,
                       message.source_mac)
@@ -86,6 +84,7 @@ logger.info "packet_in_arp_reply"
   end
 
   def packet_in_ipv4(dpid, message)
+logger.info "packet_in_ipv4"
     if forward?(message)
       forward(dpid, message)
     elsif message.ip_protocol == 1
@@ -128,16 +127,14 @@ logger.info "forwarding"
 
     interface = @interfaces.find_by_prefix(next_hop)
     return if !interface || (interface.port_number == message.in_port)
-logger.info "found interface"
 
     arp_entry = @arp_table.lookup(next_hop)
 
     if arp_entry
-logger.info "found next hop"
        actions = [SetSourceMacAddress.new(interface.mac_address),
                   SetDestinationMacAddress.new(arp_entry.mac_address),
                   SendOutPort.new(interface.port_number)]
-      send_flow_mod_add(dpid, table_id: arp_lookup_TABLE_ID, match: ExactMatch.new(message), instructions: Apply.new(actions))
+      send_flow_mod_add(dpid, table_id: ARP_LOOKUP_TABLE_ID, match: ExactMatch.new(message), instructions: Apply.new(actions))
       send_packet_out(dpid, raw_data: message.raw_data, actions: actions)
     else
       send_later(dpid,
@@ -176,10 +173,12 @@ logger.info "send later"
   def flush_unsent_packets(dpid, arp_reply, interface)
     destination_ip = arp_reply.sender_protocol_address
     @unresolved_packet_queue[destination_ip].each do |each|
+      logger.info "unresolved packet exist"
       rewrite_mac =
         [SetDestinationMacAddress.new(arp_reply.sender_hardware_address),
          SetSourceMacAddress.new(interface.mac_address),
-         SendOutPort.new(interface.port_number)]
+         SendOutPort.new(:table)]
+        # SendOutPort.new(interface.port_number)]
       send_packet_out(dpid, raw_data: each.to_binary_s, actions: rewrite_mac)
     end
     @unresolved_packet_queue[destination_ip] = []
@@ -196,40 +195,7 @@ logger.info "send request"
                     actions: SendOutPort.new(interface.port_number))
   end
 
-  def add_routing_table_entry(dpid, message)
-    send_flow_mod_add(
-      dpid,
-      table_id: ROUTING_TABLE_ID,
-      idle_timeout: AGING_TIME,
-      priority: 10,
-      match: Match.new(dl_type: 0x0800,
-                       nw_dst: "192.168.1.0/255.255.255.0"),
-      instructions: [Apply.new(NiciraRegMove.new(from: message.nw_dst,
-						 to: :reg0)),
-                    GotoTable.new(LOAD_ARP_TABLE_ID)]
-    )
-    send_flow_mod_add(
-      dpid,
-      table_id: ROUTING_TABLE_ID,
-      idle_timeout: AGING_TIME,
-      priority: 10,
-      match: Match.new(dl_type: 0x0800,
-                       nw_dst: "192.168.2.0/255.255.255.0"),
-      instructions: [Apply.new(NiciraRegMove.new(from: message.nw_dst,
-						 to: :reg0)),
-                    GotoTable.new(LOAD_ARP_TABLE_ID)]
-    )
-    send_flow_mod_add(
-      dpid,
-      table_id: ROUTING_TABLE_ID,
-      idle_timeout: 0,
-      priority: 0,
-      match: Match.new,
-      instructions: [Apply.new(NiciraRegLoad.new("0xc0a80102", :reg0)),
-                     GotoTable.new(LOAD_ARP_TABLE_ID)]
-    )
-  end
-
+#default table 0
   def add_default_ingress_forwarding_flow_entry(dpid)
     send_flow_mod_add(
       dpid,
@@ -239,7 +205,7 @@ logger.info "send request"
       instructions: GotoTable.new(CLASSIFIER_TABLE_ID)
     )
   end 
-
+#default table 1
   def add_default_classifier_forwarding_flow_entry(dpid)
 
 # Send ARP to ARP Responder
@@ -259,8 +225,8 @@ logger.info "send request"
       instructions: GotoTable.new(ROUTING_TABLE_ID)
     )
   end
-
-def add_default_arp_forwarding_flow_entry(dpid, interfaces)
+#default table 2
+ def add_default_arp_forwarding_flow_entry(dpid, interfaces)
     interfaces.map do |each|
     arp_reply_actions = [
                 SendOutPort.new(:controller),
@@ -306,12 +272,12 @@ def add_default_arp_forwarding_flow_entry(dpid, interfaces)
                         reg1: each.fetch(:port)), 
        instructions: [Apply.new(arp_default_actions), GotoTable.new(EGRESS_TABLE_ID)])   
     end
-end
+ end
 
+#default table 3
  def add_default_routing_forwarding_flow_entry(dpid, interfaces)
     default_mask = IPv4Address.new('255.255.255.255')
-    interfaces.map do |each|
-     
+    interfaces.map do |each|  
      nw_address = IPv4Address.new(each.fetch(:ip_address))
      netmask_length = each.fetch(:netmask_length)
      mask_address = nw_address.mask(netmask_length)
@@ -335,7 +301,29 @@ end
                      GotoTable.new(INTERFACE_LOOKUP_TABLE_ID)]
     )
  end 
- 
+#default table 4
+ def add_default_interface_lookup_forwarding_flow_entry(dpid, interfaces)
+   default_mask = IPv4Address.new('255.255.255.255')
+   interfaces.map do |each| 
+     nw_address = IPv4Address.new(each.fetch(:ip_address))
+     netmask_length = each.fetch(:netmask_length)
+     mask_address = nw_address.mask(netmask_length)
+     default_mask_address = default_mask.mask(netmask_length)
+
+    actions = [
+      NiciraRegLoad.new(each.fetch(:port), :reg1),
+      SetSourceMacAddress.new(each.fetch(:mac_address))
+    ]
+     send_flow_mod_add(
+       dpid,
+       table_id: INTERFACE_LOOKUP_TABLE_ID,
+       match: Match.new(reg0: mask_address.to_i,
+                        reg0_mask: default_mask_address.to_i),
+       instructions: [Apply.new(actions), GotoTable.new(ARP_LOOKUP_TABLE_ID)])
+    
+   end
+ end
+#default table 5 
  def add_default_arp_lookup_flooding_flow_entry(dpid)
     send_flow_mod_add(
       dpid,
@@ -346,31 +334,46 @@ end
       instructions: Apply.new(SendOutPort.new(:controller))
     )
  end
+#default table 6
+ def add_default_egress_forwarding_flow_entry(dpid)
+    send_flow_mod_add(
+       dpid, 
+       table_id: EGRESS_TABLE_ID, 
+       match: Match.new, 
+       instructions: Apply.new(NiciraSendOutPort.new(:reg1))
+    )
+ end
 
-def add_arp_reply_flow_entry(dpid, in_port, arp_request)
-    interface =
-      @interfaces.find_by(port_number: in_port,
-                          ip_address: arp_request.target_protocol_address)
-    return unless interface
-logger.info "add arp_reply flow"
-
-      actions = [
-                SendOutPort.new(:controller),
+def add_arp_reply_flow_entry(dpid, message)
+logger.info "add arp_reply flow #{message.source_mac},#{message.sender_protocol_address}"
+#arp_responder
+=begin      actions = [
 		NiciraRegMove.new(from: :source_mac_address,to: :destination_mac_address),
-		SetSourceMacAddress.new(interface.mac_address),
+		SetSourceMacAddress.new(message.source_mac),
                 SetArpOperation.new(Arp::Reply::OPERATION),
                 NiciraRegMove.new(from: :arp_sender_protocol_address,to: :arp_target_protocol_address),
                 NiciraRegMove.new(from: :arp_sender_hardware_address,to: :arp_target_hardware_address), 
-                SetArpSenderHardwareAddress.new(interface.mac_address),
-                SetArpSenderProtocolAddress.new(interface.ip_address),
-                NiciraRegLoad.new(in_port, :reg1)
+                SetArpSenderHardwareAddress.new(message.source_mac),
+                SetArpSenderProtocolAddress.new(message.sender_protocol_address),
+                NiciraRegMove.new(from: :in_port,to: :reg1),
                ]
       send_flow_mod_add(dpid, table_id: ARP_RESPONDER_TABLE_ID, idle_timeout: 0,
-      priority: 2, match: Match.new(ether_type: 0x0806, arp_operation: Arp::Request::OPERATION, arp_target_protocol_address: arp_request.target_protocol_address), instructions: [Apply.new(actions), GotoTable.new(EGRESS_TABLE_ID)])
-
+      priority: 2, match: Match.new(ether_type: 0x0806, arp_operation: Arp::Request::OPERATION, arp_target_protocol_address: message.sender_protocol_address), instructions: [Apply.new(actions), GotoTable.new(EGRESS_TABLE_ID)])
+=end
+#arp_lookup
+       actions = [
+		SetDestinationMacAddress.new(message.source_mac),
+                NiciraRegLoad.new(message.in_port, :reg1),
+               ]
+      send_flow_mod_add(
+           dpid, 
+           table_id: ARP_LOOKUP_TABLE_ID, 
+           idle_timeout: 0,
+           priority: 2, 
+           match: Match.new(ether_type: 0x0800, ipv4_destination_address: message.sender_protocol_address), 
+           instructions: [Apply.new(actions), GotoTable.new(EGRESS_TABLE_ID)]
+      )
+         
 end 
 
-def add_default_egress_forwarding_flow_entry(dpid)
-  send_flow_mod_add(dpid, table_id: EGRESS_TABLE_ID, match: Match.new, instructions: Apply.new(NiciraSendOutPort.new(:reg1)))
-end
 end
