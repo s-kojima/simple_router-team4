@@ -31,7 +31,7 @@ class SimpleRouter < Trema::Controller
     send_flow_mod_delete(dpid, match: Match.new)
     add_default_ingress_forwarding_flow_entry(dpid)
     add_default_classifier_forwarding_flow_entry(dpid)
-    add_default_arp_flooding_flow_entry(dpid)
+    add_default_arp_response_forwarding_flow_entry(dpid)
     add_default_load_arp_flooding_flow_entry(dpid)
   end
 
@@ -232,7 +232,7 @@ logger.info "send request"
   def add_default_ingress_forwarding_flow_entry(dpid)
     send_flow_mod_add(
       dpid,
-      table_id: CLASSIFIER_TABLE_ID,
+      table_id: INGRESS_TABLE_ID,
       idle_timeout: 0,
       match: Match.new,
       instructions: GotoTable.new(CLASSIFIER_TABLE_ID)
@@ -245,7 +245,7 @@ logger.info "send request"
       dpid,
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
-      priority: 1000,
+      priority: 0,
       match: Match.new(ether_type: 0x0806),
       instructions: GotoTable.new(ARP_RESPONDER_TABLE_ID)
     )
@@ -254,23 +254,16 @@ logger.info "send request"
       dpid,
       table_id: CLASSIFIER_TABLE_ID,
       idle_timeout: 0,
-      priority: 100,
+      priority: 0,
       match: Match.new,#to_do
       instructions: GotoTable.new(ROUTING_TABLE_ID)
     )
   end
 
-  
-  def add_default_arp_response_flooding_flow_entry(dpid)
-    send_flow_mod_add(
-      dpid,
-      table_id: ARP_RESPONDER_TABLE_ID,
-      idle_timeout: 0,
-      priority: 1,
-      match: Match.new,
-      instructions: Apply.new(SendOutPort.new(:controller))
-    )
-  end
+def add_default_arp_response_forwarding_flow_entry(dpid)
+    send_flow_mod_add(dpid, table_id: ARP_RESPONDER_TABLE_ID, match: Match.new(ether_type: 0x0806, arp_op: Arp::Reply::OPERATION), instructions: Apply.new(SendOutPort.new(:controller)))
+
+end
 
   def add_default_load_arp_flooding_flow_entry(dpid)
     send_flow_mod_add(
@@ -297,12 +290,14 @@ logger.info "add arp_reply flow"
                 NiciraRegMove.new(from: :arp_sender_hardware_address,to: :arp_target_hardware_address), 
                 SetArpSenderHardwareAddress.new(interface.mac_address),
                 SetArpSenderProtocolAddress.new(interface.ip_address),
-                SendOutPort.new(:in_port)
+                SendOutPort.new(:controller)
                ]
       send_flow_mod_add(dpid, table_id: ARP_RESPONDER_TABLE_ID, idle_timeout: 0,
-      priority: 2, match: Match.new(ether_type: 0x0806, ip_destination_address: interface.ip_address), instructions: Apply.new(actions))
+      priority: 2, match: Match.new(ether_type: 0x0806, arp_op: Arp::Request::OPERATION, arp_tpa: arp_request.target_protocol_address), instructions: Apply.new(actions))
 
 end 
+
+
 def add_l2_forwarding_flow_entry(dpid, message)
 logger.info "add ls flow entry #{message.source_mac},#{message.in_port}"
 
