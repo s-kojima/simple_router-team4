@@ -32,6 +32,8 @@ class SimpleRouter < Trema::Controller
     add_default_ingress_forwarding_flow_entry(dpid)
     add_default_classifier_forwarding_flow_entry(dpid)
     add_default_arp_forwarding_flow_entry(dpid, Configuration::INTERFACES)
+    add_default_routing_forwarding_flow_entry(dpid, Configuration::INTERFACES)
+
     add_default_arp_lookup_flooding_flow_entry(dpid)
     add_default_egress_forwarding_flow_entry(dpid)
   end
@@ -306,16 +308,44 @@ def add_default_arp_forwarding_flow_entry(dpid, interfaces)
     end
 end
 
-  def add_default_arp_lookup_flooding_flow_entry(dpid)
+ def add_default_routing_forwarding_flow_entry(dpid, interfaces)
+    default_mask = IPv4Address.new('255.255.255.255')
+    interfaces.map do |each|
+     
+     nw_address = IPv4Address.new(each.fetch(:ip_address))
+     netmask_length = each.fetch(:netmask_length)
+     mask_address = nw_address.mask(netmask_length)
+     default_mask_address = default_mask.mask(netmask_length)
+     send_flow_mod_add(
+       dpid,
+       table_id: ROUTING_TABLE_ID,
+       priority: 40024,
+       match: Match.new(ether_type: 0x0800, 
+                        ipv4_destination_address: mask_address,
+                        ipv4_destination_address_mask: default_mask_address),
+       instructions: [Apply.new(NiciraRegMove.new(from: :ipv4_destination_address,to: :reg0)), GotoTable.new(INTERFACE_LOOKUP_TABLE_ID)])
+    end
+    nw_address = IPv4Address.new('192.168.1.2')
+    send_flow_mod_add(
+      dpid,
+      table_id: ROUTING_TABLE_ID,
+      priority: 0,
+      match: Match.new(ether_type: 0x0800),
+      instructions: [Apply.new(NiciraRegLoad.new(nw_address.to_i, :reg0)),
+                     GotoTable.new(INTERFACE_LOOKUP_TABLE_ID)]
+    )
+ end 
+ 
+ def add_default_arp_lookup_flooding_flow_entry(dpid)
     send_flow_mod_add(
       dpid,
       table_id: ARP_LOOKUP_TABLE_ID,
       idle_timeout: 0,
       priority: 1,
-      match: Match.new,
+      match: Match.new(ether_type: 0x0800),
       instructions: Apply.new(SendOutPort.new(:controller))
     )
-  end
+ end
 
 def add_arp_reply_flow_entry(dpid, in_port, arp_request)
     interface =
